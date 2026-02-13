@@ -24,15 +24,20 @@ pipeline {
             }
         }
 
-        stage('Build environment') {
-            steps {
-                echo "Building virtualenv"
-                sh  ''' conda create --yes -n ${BUILD_TAG} python
-                        source activate ${BUILD_TAG}
-                        pip install -r requirements/dev.txt
-                    '''
-            }
-        }
+       stage('Build environment') {
+    steps {
+        echo "Building virtualenv"
+        sh '''
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install --upgrade pip
+            if [ -f requirements.txt ]; then
+                pip install -r requirements.txt
+            fi
+        '''
+    }
+}
+
 
         stage('Static code metrics') {
             steps {
@@ -144,3 +149,4 @@ pipeline {
     }
 
 }
+
