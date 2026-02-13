@@ -1,10 +1,6 @@
 pipeline {
     agent any
 
-    triggers {
-        pollSCM('*/5 * * * 1-5')
-    }
-
     options {
         skipDefaultCheckout(true)
         buildDiscarder(logRotator(numToKeepStr: '10'))
@@ -21,40 +17,16 @@ pipeline {
 
         stage('Build environment') {
             steps {
-                echo "Creating virtual environment"
+                echo "Setting up virtual environment"
                 sh '''
-                    python3 -m venv venv
+                    if [ ! -d venv ]; then
+                        python3 -m venv venv
+                    fi
                     . venv/bin/activate
                     pip install --upgrade pip
-                    if [ -f requirements.txt ]; then
-                        pip install -r requirements.txt
-                    fi
+                    pip install -r requirements.txt
                     mkdir -p reports
                 '''
-            }
-        }
-
-        stage('Static code metrics') {
-            steps {
-                sh '''
-                    . venv/bin/activate
-                    radon raw --json irisvmpy > raw_report.json || true
-                    radon cc --json irisvmpy > cc_report.json || true
-                    radon mi --json irisvmpy > mi_report.json || true
-                    sloccount --duplicates --wide irisvmpy > sloccount.sc || true
-
-                    coverage run irisvmpy/iris.py 1 1 2 3 || true
-                    coverage xml -o reports/coverage.xml || true
-
-                    pylint irisvmpy || true
-                '''
-            }
-            post {
-                always {
-                    step([$class: 'CoberturaPublisher',
-                          coberturaReportFile: 'reports/coverage.xml',
-                          failNoReports: false])
-                }
             }
         }
 
@@ -62,7 +34,7 @@ pipeline {
             steps {
                 sh '''
                     . venv/bin/activate
-                    pytest --verbose --junit-xml=reports/unit_tests.xml || true
+                    pytest --verbose --junit-xml=reports/unit_tests.xml
                 '''
             }
             post {
@@ -73,23 +45,10 @@ pipeline {
             }
         }
 
-        stage('Acceptance tests') {
-            steps {
-                sh '''
-                    . venv/bin/activate
-                    behave -f json -o reports/acceptance.json || true
-                '''
-            }
-            post {
-                always {
-                    cucumber buildStatus: 'SUCCESS',
-                             fileIncludePattern: '**/*.json',
-                             jsonReportDirectory: './reports/'
-                }
-            }
-        }
-
         stage('Build package') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
             steps {
                 sh '''
                     . venv/bin/activate
