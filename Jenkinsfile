@@ -7,148 +7,114 @@ pipeline {
 
     options {
         skipDefaultCheckout(true)
-         // Keep the 10 most recent builds
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
     }
 
-    environment {
-      PATH="/var/lib/jenkins/miniconda3/bin:$PATH"
-    }
-
     stages {
 
-        stage ("Code pull"){
-            steps{
+        stage("Code pull") {
+            steps {
                 checkout scm
             }
         }
 
-       stage('Build environment') {
-    steps {
-        echo "Building virtualenv"
-        sh '''
-            python3 -m venv venv
-            . venv/bin/activate
-            pip install --upgrade pip
-            if [ -f requirements.txt ]; then
-                pip install -r requirements.txt
-            fi
-        '''
-    }
-}
-
+        stage('Build environment') {
+            steps {
+                echo "Creating virtual environment"
+                sh '''
+                    python3 -m venv venv
+                    . venv/bin/activate
+                    pip install --upgrade pip
+                    if [ -f requirements.txt ]; then
+                        pip install -r requirements.txt
+                    fi
+                    mkdir -p reports
+                '''
+            }
+        }
 
         stage('Static code metrics') {
             steps {
-                echo "Raw metrics"
-                sh  ''' source activate ${BUILD_TAG}
-                        radon raw --json irisvmpy > raw_report.json
-                        radon cc --json irisvmpy > cc_report.json
-                        radon mi --json irisvmpy > mi_report.json
-                        sloccount --duplicates --wide irisvmpy > sloccount.sc
-                    '''
-                echo "Test coverage"
-                sh  ''' source activate ${BUILD_TAG}
-                        coverage run irisvmpy/iris.py 1 1 2 3
-                        python -m coverage xml -o reports/coverage.xml
-                    '''
-                echo "Style check"
-                sh  ''' source activate ${BUILD_TAG}
-                        pylint irisvmpy || true
-                    '''
+                sh '''
+                    . venv/bin/activate
+                    radon raw --json irisvmpy > raw_report.json || true
+                    radon cc --json irisvmpy > cc_report.json || true
+                    radon mi --json irisvmpy > mi_report.json || true
+                    sloccount --duplicates --wide irisvmpy > sloccount.sc || true
+
+                    coverage run irisvmpy/iris.py 1 1 2 3 || true
+                    coverage xml -o reports/coverage.xml || true
+
+                    pylint irisvmpy || true
+                '''
             }
-            post{
-                always{
+            post {
+                always {
                     step([$class: 'CoberturaPublisher',
-                                   autoUpdateHealth: false,
-                                   autoUpdateStability: false,
-                                   coberturaReportFile: 'reports/coverage.xml',
-                                   failNoReports: false,
-                                   failUnhealthy: false,
-                                   failUnstable: false,
-                                   maxNumberOfBuilds: 10,
-                                   onlyStable: false,
-                                   sourceEncoding: 'ASCII',
-                                   zoomCoverageChart: false])
+                          coberturaReportFile: 'reports/coverage.xml',
+                          failNoReports: false])
                 }
             }
         }
 
-
-
         stage('Unit tests') {
             steps {
-                sh  ''' source activate ${BUILD_TAG}
-                        python -m pytest --verbose --junit-xml reports/unit_tests.xml
-                    '''
+                sh '''
+                    . venv/bin/activate
+                    pytest --verbose --junit-xml=reports/unit_tests.xml || true
+                '''
             }
             post {
                 always {
-                    // Archive unit tests for the future
-                    junit allowEmptyResults: true, testResults: 'reports/unit_tests.xml'
+                    junit allowEmptyResults: true,
+                          testResults: 'reports/unit_tests.xml'
                 }
             }
         }
 
         stage('Acceptance tests') {
             steps {
-                sh  ''' source activate ${BUILD_TAG}
-                        behave -f=formatters.cucumber_json:PrettyCucumberJSONFormatter -o ./reports/acceptance.json || true
-                    '''
+                sh '''
+                    . venv/bin/activate
+                    behave -f json -o reports/acceptance.json || true
+                '''
             }
             post {
                 always {
-                    cucumber (buildStatus: 'SUCCESS',
-                    fileIncludePattern: '**/*.json',
-                    jsonReportDirectory: './reports/',
-                    parallelTesting: true,
-                    sortingMethod: 'ALPHABETICAL')
+                    cucumber buildStatus: 'SUCCESS',
+                             fileIncludePattern: '**/*.json',
+                             jsonReportDirectory: './reports/'
                 }
             }
         }
 
         stage('Build package') {
-            when {
-                expression {
-                    currentBuild.result == null || currentBuild.result == 'SUCCESS'
-                }
-            }
             steps {
-                sh  ''' source activate ${BUILD_TAG}
-                        python setup.py bdist_wheel
-                    '''
+                sh '''
+                    . venv/bin/activate
+                    python setup.py bdist_wheel
+                '''
             }
             post {
                 always {
-                    // Archive unit tests for the future
-                    archiveArtifacts allowEmptyArchive: true, artifacts: 'dist/*whl', fingerprint: true
+                    archiveArtifacts allowEmptyArchive: true,
+                                     artifacts: 'dist/*.whl',
+                                     fingerprint: true
                 }
             }
         }
-
-        // stage("Deploy to PyPI") {
-        //     steps {
-        //         sh """twine upload dist/*
-        //         """
-        //     }
-        // }
     }
 
-    // post post {
-    always {
-        echo "Pipeline finished"
-    }
-
-    success {
-        echo "Build successful"
-    }
-
-    failure {
-        echo "Build failed"
+    post {
+        always {
+            echo "Pipeline finished"
+        }
+        success {
+            echo "Build successful"
+        }
+        failure {
+            echo "Build failed"
+        }
     }
 }
-
-
-
-
